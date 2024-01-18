@@ -95,11 +95,11 @@ class ContainerId(Resource):
     @api.doc('some operation', security='apikey')
     @token_required
     @api.doc(params={'id': 'The container id'},)
-    @api.doc(params={'command': 'start, stop, delete'},)
+    @api.doc(params={'command': 'start, stop'},)
     @handle_exceptions
     def get(self, id: int, command: str):
 
-        commands = ['start', 'stop', 'delete']
+        commands = ['start', 'stop', 'del_test']
 
         if (command not in commands):
             return {"error": f"Bad Request: Invalid command passed in your route'{command}'. Valid commands are {', '.join(commands)}"}, 400
@@ -110,7 +110,7 @@ class ContainerId(Resource):
                 endpoint, headers={"Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
             response.raise_for_status()
 
-        elif command == "delete":
+        elif command == "del_test":
             endpoint = f"{API_BASE_URL}/{id}"
             response = requests.delete(endpoint, headers={
                                        "Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
