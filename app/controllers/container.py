@@ -1,68 +1,21 @@
-
 from app.utils.authorization import token_required
 from flask_restplus import Resource, Namespace, fields
-from flask import request, jsonify
+from flask import request
 import requests
 import time
 from flask_restx import fields
 from functools import wraps
 import os
 from dotenv import load_dotenv
-load_dotenv()
 
+load_dotenv()
 
 api = Namespace('Container', description='Containers creation and manager')
 
 API_BASE_URL = f'https://{os.getenv("PROXMOX_NODE_IP")}:8006/api2/json/nodes/{os.getenv("PROXMOX_NODE_NAME")}/lxc'
-API_AUTH = f'https://{os.getenv("PROXMOX_NODE_IP")}:8006/api2/json/access/ticket'
-CREDENTIAL = {
-    "username": f"{os.getenv('API_USER')}@{os.getenv('PROXMOX_NODE_NAME')}", "password": os.getenv("API_USER_PASSWORD")}
 
-
-def get_data(endpoint, data):
-    response = requests.post(endpoint, data=data, verify=False)
-    response.raise_for_status()
-    return response.json()["data"]
-
-
-# Get ticket and CSRFPreventionToken
-ticket = get_data(API_AUTH, CREDENTIAL)["ticket"]
-csrf_token = get_data(API_AUTH, CREDENTIAL)["CSRFPreventionToken"]
-
-
-# Function to retrieve information about all containers
-def list_all_containers():
-    endpoint = f"{API_BASE_URL}"
-    response = requests.get(
-        endpoint, cookies={"PVEAuthCookie": ticket}, verify=False)
-    response.raise_for_status()
-
-    containers = response.json()["data"]
-    return containers
-
-
-# Function to retrieve information about a specific container by ID
-def get_container_info(container_id):
-    endpoint = f"{API_BASE_URL}/{container_id}/config"
-    response = requests.get(
-        endpoint, cookies={"PVEAuthCookie": ticket}, verify=False)
-    response.raise_for_status()
-    is_container_locked(container_id)
-    container_info = response.json()["data"]
-
-    return container_info
-
-
-# Function to check if a container is locked
-def is_container_locked(container_id):
-    endpoint = f"{API_BASE_URL}/{container_id}/status/current"
-    response = requests.get(
-        endpoint, cookies={"PVEAuthCookie": ticket}, verify=False)
-    response.raise_for_status()
-    if 'lock' in response.json()["data"]:
-        return {"locked": True}
-    else:
-        return {"locked": False}
+# Use the API token directly
+AUTH_TOKEN_PROXMOX = f'{os.getenv("PROXMOX_USER")}@pve!{os.getenv("PROXMOX_TOKEN_ID_SECRET")}'
 
 
 # Decorator for handling exceptions in routes
@@ -78,6 +31,41 @@ def handle_exceptions(func):
         except Exception as e:
             return {"error": f"Internal server error occurred: {str(e)}"}, 500
     return decorated_function
+
+
+# Function to retrieve information about all containers
+def list_all_containers():
+    endpoint = f"{API_BASE_URL}"
+    response = requests.get(
+        endpoint, headers={"Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
+    response.raise_for_status()
+
+    containers = response.json()["data"]
+    return containers
+
+
+# Function to retrieve information about a specific container by ID
+def get_container_info(container_id):
+    endpoint = f"{API_BASE_URL}/{container_id}/config"
+    response = requests.get(
+        endpoint, headers={"Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
+    response.raise_for_status()
+    is_container_locked(container_id)
+    container_info = response.json()["data"]
+
+    return container_info
+
+
+# Function to check if a container is locked
+def is_container_locked(container_id):
+    endpoint = f"{API_BASE_URL}/{container_id}/status/current"
+    response = requests.get(
+        endpoint, headers={"Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
+    response.raise_for_status()
+    if 'lock' in response.json()["data"]:
+        return {"locked": True}
+    else:
+        return {"locked": False}
 
 
 @api.route('/')
@@ -118,14 +106,14 @@ class ContainerId(Resource):
 
         if command in ["start", "stop"]:
             endpoint = f"{API_BASE_URL}/{id}/status/{command}"
-            response = requests.post(endpoint, cookies={"PVEAuthCookie": ticket}, headers={
-                "CSRFPreventionToken": csrf_token}, verify=False)
+            response = requests.post(
+                endpoint, headers={"Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
             response.raise_for_status()
 
         elif command == "delete":
             endpoint = f"{API_BASE_URL}/{id}"
-            response = requests.delete(endpoint, cookies={"PVEAuthCookie": ticket}, headers={
-                "CSRFPreventionToken": csrf_token}, verify=False)
+            response = requests.delete(endpoint, headers={
+                                       "Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
             response.raise_for_status()
 
         return {'message': 'success'}, 200
@@ -135,7 +123,7 @@ class ContainerId(Resource):
 class ContainerIdEdit(Resource):
 
     payload_model = api.model('ContainerEditModel', {
-        "nameserver": fields.String(example="8.8.8.8,4.4.4.4"),
+        "nameserver": fields.String(example="8.8.8.8,8.8.4.4"),
         "searchdomain": fields.String(example="hittelco.com.br"),
     })
 
@@ -148,8 +136,8 @@ class ContainerIdEdit(Resource):
     def put(self, id: int):
         data = request.json
         endpoint = f"{API_BASE_URL}/{id}/config"
-        response = requests.put(endpoint, cookies={"PVEAuthCookie": ticket}, headers={
-                                "CSRFPreventionToken": csrf_token}, data=data, verify=False)
+        response = requests.put(endpoint, headers={
+            "Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, data=data, verify=False)
         response.raise_for_status()
 
         return {'message': 'success'}, 200
@@ -163,17 +151,17 @@ class ContainerCreateUp(Resource):
         "ostemplate": fields.String(example="local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"),
         "storage": fields.String(example="local"),
         "cores": fields.String(example="1"),
+        "pool": fields.String(example='desenvolvimento'),
         "cpuunits": fields.String(example="512"),
         "memory": fields.String(example="512"),
         "swap": fields.String(example="0"),
-        "password": fields.String(example="91472432"),
+        "password": fields.String(example="88325936"),
         "hostname": fields.String(example="ctnodeapi"),
-        "nameserver": fields.String(example="8.8.8.8,4.4.4.4"),
+        "nameserver": fields.String(example="8.8.8.8,8.8.4.4"),
         "searchdomain": fields.String(example="hittelco.com.br"),
     })
 
-    @api.response(201, "Success") 
-
+    @api.response(201, "Success")
     @api.doc('some operation', security='apikey')
     @token_required
     @api.expect(payload_model, validate=True)
@@ -211,20 +199,20 @@ class ContainerCreateUp(Resource):
 
         # Create container
         endpoint = f"{API_BASE_URL}"
-        response = requests.post(endpoint, cookies={"PVEAuthCookie": ticket}, headers={
-            "CSRFPreventionToken": csrf_token}, data=data, verify=False)
+        response = requests.post(endpoint, headers={
+            "Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, data=data, verify=False)
         response.raise_for_status()
         print(f'Container id {vm_id} created!')
 
         # Check each 3 seconds if the container is locked before start
         while is_container_locked(vm_id)['locked']:
             print('*********** LOCKED ************')
-            time.sleep(5)
+            time.sleep(8)
 
         # Start container
         endpoint = f"{API_BASE_URL}/{vm_id}/status/start"
-        response = requests.post(endpoint, cookies={"PVEAuthCookie": ticket}, headers={
-            "CSRFPreventionToken": csrf_token}, verify=False)
+        response = requests.post(endpoint, headers={
+            "Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, verify=False)
         response.raise_for_status()
         print(f'Container id {vm_id} started!')
 
@@ -239,13 +227,14 @@ class ContainerCreate(Resource):
         "ostemplate": fields.String(example="local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"),
         "storage": fields.String(example="local"),
         "vmid": fields.String(example="538"),
+        "pool": fields.String(example='desenvolvimento'),
         "cores": fields.String(example="1"),
         "cpuunits": fields.String(example="512"),
         "memory": fields.String(example="512"),
         "swap": fields.String(example="0"),
         "password": fields.String(example="988325936"),
         "hostname": fields.String(example="ctnodeapi538"),
-        "nameserver": fields.String(example="8.8.8.8,4.4.4.4"),
+        "nameserver": fields.String(example="8.8.8.8,8.8.4.4"),
         "searchdomain": fields.String(example="hittelco.com.br"),
     })
 
@@ -262,7 +251,7 @@ class ContainerCreate(Resource):
                 data[key] = int(value)
 
         endpoint = f"{API_BASE_URL}"
-        response = requests.post(endpoint, cookies={"PVEAuthCookie": ticket}, headers={
-            "CSRFPreventionToken": csrf_token}, data=data, verify=False)
+        response = requests.post(endpoint, headers={
+            "Authorization": f"PVEAPIToken={AUTH_TOKEN_PROXMOX}"}, data=data, verify=False)
         response.raise_for_status()
         return {'message': 'success'}, 201
